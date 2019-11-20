@@ -1,0 +1,7 @@
+dpc2sim*
+lib/
+outputs/
+traces/
+pintool/
+*.sh
+README
