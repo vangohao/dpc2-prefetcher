@@ -14,10 +14,13 @@
  */
 
 #include <stdio.h>
+#ifndef COMBINED_PREFETCHER
 #include "../inc/prefetcher.h"
+#include "combined.h"
+#endif
 
 #define IP_TRACKER_COUNT 1024
-#define PREFETCH_DEGREE 3
+#define IP_PREFETCH_DEGREE 3
 
 typedef struct ip_tracker
 {
@@ -29,13 +32,13 @@ typedef struct ip_tracker
   // the stride between the last two addresses accessed by this IP
   long long int last_stride;
 
-  // use LRU to evict old IP trackers
+  // use LRU to evict old IP ip_trackers
   unsigned long long int lru_cycle;
 } ip_tracker_t;
 
-ip_tracker_t trackers[IP_TRACKER_COUNT];
+ip_tracker_t ip_trackers[IP_TRACKER_COUNT];
 
-void l2_prefetcher_initialize(int cpu_num)
+void ip_l2_prefetcher_initialize(int cpu_num)
 {
   printf("IP-based Stride Prefetcher\n");
   // you can inspect these knob values from your code to see which configuration you're runnig in
@@ -44,14 +47,14 @@ void l2_prefetcher_initialize(int cpu_num)
   int i;
   for (i = 0; i < IP_TRACKER_COUNT; i++)
   {
-    trackers[i].ip = 0;
-    trackers[i].last_addr = 0;
-    trackers[i].last_stride = 0;
-    trackers[i].lru_cycle = 0;
+    ip_trackers[i].ip = 0;
+    ip_trackers[i].last_addr = 0;
+    ip_trackers[i].last_stride = 0;
+    ip_trackers[i].lru_cycle = 0;
   }
 }
 
-void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned long long int ip, int cache_hit)
+void ip_l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned long long int ip, int cache_hit)
 {
   // uncomment this line to see all the information available to make prefetch decisions
   //printf("(%lld 0x%llx 0x%llx %d %d %d) ", get_current_cycle(0), addr, ip, cache_hit, get_l2_read_queue_occupancy(0), get_l2_mshr_occupancy(0));
@@ -62,9 +65,9 @@ void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned lo
   int i;
   for (i = 0; i < IP_TRACKER_COUNT; i++)
   {
-    if (trackers[i].ip == ip)
+    if (ip_trackers[i].ip == ip)
     {
-      trackers[i].lru_cycle = get_current_cycle(0);
+      ip_trackers[i].lru_cycle = get_current_cycle(0);
       tracker_index = i;
       break;
     }
@@ -74,24 +77,24 @@ void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned lo
   {
     // this is a new IP that doesn't have a tracker yet, so allocate one
     int lru_index = 0;
-    unsigned long long int lru_cycle = trackers[lru_index].lru_cycle;
+    unsigned long long int lru_cycle = ip_trackers[lru_index].lru_cycle;
     int i;
     for (i = 0; i < IP_TRACKER_COUNT; i++)
     {
-      if (trackers[i].lru_cycle < lru_cycle)
+      if (ip_trackers[i].lru_cycle < lru_cycle)
       {
         lru_index = i;
-        lru_cycle = trackers[lru_index].lru_cycle;
+        lru_cycle = ip_trackers[lru_index].lru_cycle;
       }
     }
 
     tracker_index = lru_index;
 
     // reset the old tracker
-    trackers[tracker_index].ip = ip;
-    trackers[tracker_index].last_addr = addr;
-    trackers[tracker_index].last_stride = 0;
-    trackers[tracker_index].lru_cycle = get_current_cycle(0);
+    ip_trackers[tracker_index].ip = ip;
+    ip_trackers[tracker_index].last_addr = addr;
+    ip_trackers[tracker_index].last_stride = 0;
+    ip_trackers[tracker_index].lru_cycle = get_current_cycle(0);
 
     return;
   }
@@ -100,13 +103,13 @@ void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned lo
   // this bit appears overly complicated because we're calculating
   // differences between unsigned address variables
   long long int stride = 0;
-  if (addr > trackers[tracker_index].last_addr)
+  if (addr > ip_trackers[tracker_index].last_addr)
   {
-    stride = addr - trackers[tracker_index].last_addr;
+    stride = addr - ip_trackers[tracker_index].last_addr;
   }
   else
   {
-    stride = trackers[tracker_index].last_addr - addr;
+    stride = ip_trackers[tracker_index].last_addr - addr;
     stride *= -1;
   }
 
@@ -118,11 +121,11 @@ void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned lo
 
   // only do any prefetching if there's a pattern of seeing the same
   // stride more than once
-  if (stride == trackers[tracker_index].last_stride)
+  if (stride == ip_trackers[tracker_index].last_stride)
   {
     // do some prefetching
     int i;
-    for (i = 0; i < PREFETCH_DEGREE; i++)
+    for (i = 0; i < IP_PREFETCH_DEGREE; i++)
     {
       unsigned long long int pf_address = addr + (stride * (i + 1));
 
@@ -136,36 +139,15 @@ void l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsigned lo
       // check the MSHR occupancy to decide if we're going to prefetch to the L2 or LLC
       if (get_l2_mshr_occupancy(0) < 8)
       {
-        l2_prefetch_line(0, addr, pf_address, FILL_L2);
+        fake_l2_prefetch_line(0, addr, pf_address, FILL_L2, IP);
       }
       else
       {
-        l2_prefetch_line(0, addr, pf_address, FILL_LLC);
+        fake_l2_prefetch_line(0, addr, pf_address, FILL_LLC, IP);
       }
     }
   }
 
-  trackers[tracker_index].last_addr = addr;
-  trackers[tracker_index].last_stride = stride;
-}
-
-void l2_cache_fill(int cpu_num, unsigned long long int addr, int set, int way, int prefetch, unsigned long long int evicted_addr)
-{
-  // uncomment this line to see the information available to you when there is a cache fill event
-  //printf("0x%llx %d %d %d 0x%llx\n", addr, set, way, prefetch, evicted_addr);
-}
-
-void l2_prefetcher_heartbeat_stats(int cpu_num)
-{
-  printf("Prefetcher heartbeat stats\n");
-}
-
-void l2_prefetcher_warmup_stats(int cpu_num)
-{
-  printf("Prefetcher warmup complete stats\n\n");
-}
-
-void l2_prefetcher_final_stats(int cpu_num)
-{
-  printf("Prefetcher final stats\n");
+  ip_trackers[tracker_index].last_addr = addr;
+  ip_trackers[tracker_index].last_stride = stride;
 }
