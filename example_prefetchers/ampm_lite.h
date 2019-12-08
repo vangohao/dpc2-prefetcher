@@ -162,11 +162,11 @@ void ampm_l2_prefetcher_operate(int cpu_num, unsigned long long int addr, unsign
 	  // check the MSHR occupancy to decide if we're going to prefetch to the L2 or LLC
 	  if(get_l2_mshr_occupancy(0) < 8)
 	    {
-	      l2_prefetch_line(0, addr, pf_address, FILL_L2);
+	      fake_l2_prefetch_line(0, addr, pf_address, FILL_L2, AMPM);
 	    }
 	  else
 	    {
-	      l2_prefetch_line(0, addr, pf_address, FILL_LLC);	      
+	      fake_l2_prefetch_line(0, addr, pf_address, FILL_LLC, AMPM);	      
 	    }
 
 	  // mark the prefetched line so we don't prefetch it again
